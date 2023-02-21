@@ -1136,6 +1136,9 @@ func (ctrl *ApplicationController) processRequestedAppOperation(app *appv1.Appli
 		state = app.Status.OperationState.DeepCopy()
 		terminating = state.Phase == synccommon.OperationTerminating
 		// Failed  operation with retry strategy might have be in-progress and has completion time
+		duration := time.Now().UTC().Unix() - state.StartedAt.Unix()
+		// 24 Hours timeout, should be in spec
+		var timeout int64 = 60 * 60 * 24
 		if state.FinishedAt != nil && !terminating {
 			retryAt, err := app.Status.OperationState.Operation.Retry.NextRetryAt(state.FinishedAt.Time, state.RetryCount)
 			if err != nil {
@@ -1157,6 +1160,12 @@ func (ctrl *ApplicationController) processRequestedAppOperation(app *appv1.Appli
 				// Get rid of sync results and null out previous operation completion time
 				state.SyncResult = nil
 			}
+		} else if state.Phase == synccommon.OperationRunning && duration > timeout {
+			logCtx.Infof("Sync too long, terminating app, was phase: %s, message: %s", state.Phase, state.Message)
+			state.Phase = synccommon.OperationTerminating
+			state.Message = "Operation forced to terminate (timeout)"
+			ctrl.setOperationState(app, state)
+			return
 		} else {
 			logCtx.Infof("Resuming in-progress operation. phase: %s, message: %s", state.Phase, state.Message)
 		}
